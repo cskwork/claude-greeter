@@ -29,7 +29,6 @@ pip install -r requirements.txt
 ### Step 4: Configure .env
 Edit `.env` file:
 ```env
-ANTHROPIC_API_KEY=your_actual_key_here
 START_TIME=09:00
 ```
 
