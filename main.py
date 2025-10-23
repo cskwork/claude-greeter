@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException
 from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from claude_agent_sdk import query, ClaudeAgentOptions
 
 # Load environment variables
@@ -74,25 +75,47 @@ def calculate_next_run_time():
         hour, minute = map(int, START_TIME.split(":"))
         now = datetime.now()
         start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        
+
         # If start time has passed today, schedule for next occurrence
         if now > start_time:
             # Find next 5-hour interval from start time
             hours_since_start = (now - start_time).total_seconds() / 3600
             intervals_passed = int(hours_since_start / 5) + 1
             next_run = start_time.replace(hour=(hour + (intervals_passed * 5)) % 24)
-            
+
             # Adjust date if we wrapped around midnight
             if next_run <= now:
                 from datetime import timedelta
                 next_run = start_time + timedelta(hours=(intervals_passed + 1) * 5)
         else:
             next_run = start_time
-        
+
         return next_run
-        
+
     except ValueError:
         raise ValueError(f"Invalid START_TIME format: {START_TIME}. Use HH:MM (24-hour format)")
+
+
+def job_executed_listener(event):
+    """스케줄러 작업 완료 이벤트 리스너"""
+    job = scheduler.get_job(event.job_id)
+    if job:
+        print("=" * 60)
+        print(f"[{datetime.now()}] Job '{job.name}' completed successfully")
+        print(f"Next scheduled run: {job.next_run_time}")
+        print("=" * 60)
+
+
+def job_error_listener(event):
+    """스케줄러 작업 오류 이벤트 리스너"""
+    job = scheduler.get_job(event.job_id)
+    job_name = job.name if job else event.job_id
+    print("=" * 60)
+    print(f"[{datetime.now()}] ERROR: Job '{job_name}' failed")
+    print(f"Exception: {event.exception}")
+    if job:
+        print(f"Next scheduled run: {job.next_run_time}")
+    print("=" * 60)
 
 
 @asynccontextmanager
@@ -113,8 +136,14 @@ async def lifespan(app: FastAPI):
         )
         
         scheduler.start()
+
+        # 이벤트 리스너 등록
+        scheduler.add_listener(job_executed_listener, EVENT_JOB_EXECUTED)
+        scheduler.add_listener(job_error_listener, EVENT_JOB_ERROR)
+
         print(f"Scheduler started. Next run: {scheduler.get_job('greet_agent_job').next_run_time}")
-        
+        print("Event listeners registered for job monitoring")
+
         yield
         
     finally:
