@@ -1,8 +1,10 @@
 import os
 import asyncio
 import traceback
-from datetime import datetime, time
+import subprocess
+from datetime import datetime, time, timedelta
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import anyio
 from fastapi import FastAPI, HTTPException
@@ -22,12 +24,132 @@ PREVENT_START_TIME = os.getenv("PREVENT_START_TIME", None)
 PREVENT_END_TIME = os.getenv("PREVENT_END_TIME", None)
 LOG_DIR = "log"
 
+# 재시도 및 타임아웃 설정
+MAX_RETRIES = 3
+RETRY_DELAYS = [1, 2, 4]  # 초 단위 (지수 백오프)
+API_TIMEOUT = 30  # 초 단위
+MIN_CALL_INTERVAL = 5  # API 호출 간 최소 간격 (초)
+
+# 마지막 API 호출 시간 추적
+last_api_call_time: Optional[datetime] = None
+
 # Create log directory if it doesn't exist
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
 
 # Scheduler instance
 scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+
+
+async def cleanup_stale_processes():
+    """오래된 claude-code CLI 프로세스 정리"""
+    try:
+        # claude-code 프로세스 찾기 및 정리
+        result = subprocess.run(
+            ["pgrep", "-f", "claude-code"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            print(f"[{datetime.now()}] Found {len(pids)} claude-code processes, checking for stale ones...")
+
+            # 프로세스 정리 (필요시)
+            # 주의: 실제 사용 중인 프로세스를 종료하지 않도록 주의
+            for pid in pids:
+                try:
+                    # 프로세스 정보 확인
+                    ps_result = subprocess.run(
+                        ["ps", "-p", pid, "-o", "etime="],
+                        capture_output=True,
+                        text=True,
+                        timeout=2
+                    )
+
+                    if ps_result.returncode == 0:
+                        elapsed = ps_result.stdout.strip()
+                        print(f"[{datetime.now()}] Process {pid} uptime: {elapsed}")
+                except Exception as e:
+                    print(f"[{datetime.now()}] Warning: Could not check process {pid}: {e}")
+
+    except subprocess.TimeoutExpired:
+        print(f"[{datetime.now()}] Warning: Process cleanup timed out")
+    except FileNotFoundError:
+        # pgrep 명령어가 없는 시스템 (Windows 등)
+        pass
+    except Exception as e:
+        print(f"[{datetime.now()}] Warning: Process cleanup failed: {e}")
+
+
+async def enforce_rate_limit():
+    """API 호출 간 최소 간격 보장"""
+    global last_api_call_time
+
+    if last_api_call_time:
+        elapsed = (datetime.now() - last_api_call_time).total_seconds()
+        if elapsed < MIN_CALL_INTERVAL:
+            wait_time = MIN_CALL_INTERVAL - elapsed
+            print(f"[{datetime.now()}] Rate limit: waiting {wait_time:.1f}s before API call...")
+            await asyncio.sleep(wait_time)
+
+    last_api_call_time = datetime.now()
+
+
+async def query_claude_with_retry(prompt: str, options: ClaudeAgentOptions, attempt: int = 1) -> str:
+    """
+    재시도 로직이 포함된 Claude 쿼리 함수
+
+    Args:
+        prompt: 전송할 프롬프트
+        options: Claude Agent 옵션
+        attempt: 현재 시도 횟수 (내부 사용)
+
+    Returns:
+        Claude의 응답 텍스트
+
+    Raises:
+        Exception: 모든 재시도 실패 시
+    """
+    try:
+        # 타임아웃과 함께 쿼리 실행
+        full_response = ""
+
+        async def run_query():
+            nonlocal full_response
+            async for message in query(prompt=prompt, options=options):
+                if hasattr(message, 'content'):
+                    for block in message.content:
+                        if hasattr(block, 'text'):
+                            full_response += block.text
+
+        # 타임아웃 적용
+        await asyncio.wait_for(run_query(), timeout=API_TIMEOUT)
+
+        return full_response
+
+    except asyncio.TimeoutError:
+        error_msg = f"Timeout after {API_TIMEOUT}s"
+        if attempt < MAX_RETRIES:
+            delay = RETRY_DELAYS[attempt - 1]
+            print(f"[{datetime.now()}] Attempt {attempt} failed: {error_msg}. Retrying in {delay}s...")
+            await asyncio.sleep(delay)
+            return await query_claude_with_retry(prompt, options, attempt + 1)
+        raise Exception(f"{error_msg} (all {MAX_RETRIES} attempts failed)")
+
+    except Exception as e:
+        error_msg = str(e)
+        if attempt < MAX_RETRIES:
+            delay = RETRY_DELAYS[attempt - 1]
+            print(f"[{datetime.now()}] Attempt {attempt} failed: {error_msg}. Retrying in {delay}s...")
+
+            # 재시도 전 프로세스 정리
+            await cleanup_stale_processes()
+            await asyncio.sleep(delay)
+
+            return await query_claude_with_retry(prompt, options, attempt + 1)
+        raise Exception(f"{error_msg} (all {MAX_RETRIES} attempts failed)")
 
 
 async def greet_agent():
@@ -62,28 +184,32 @@ async def greet_agent():
     try:
         print(f"[{datetime.now()}] Greeting Claude agent...")
 
+        # 프로세스 정리
+        await cleanup_stale_processes()
+
+        # 레이트 리미트 적용
+        await enforce_rate_limit()
+
+        # Claude Agent 옵션 설정
         options = ClaudeAgentOptions(
             system_prompt="You are a friendly assistant. Keep responses brief.",
             max_turns=1,
             allowed_tools=[]  # No tools needed for simple greeting
         )
-        
-        full_response = ""
-        async for message in query(prompt="Hi!", options=options):
-            # Extract text from message
-            if hasattr(message, 'content'):
-                for block in message.content:
-                    if hasattr(block, 'text'):
-                        full_response += block.text
-        
-        log_message = f"[{datetime.now()}] Claude responded: {full_response}\n"
+
+        # 재시도 로직이 포함된 쿼리 실행
+        start_time = datetime.now()
+        full_response = await query_claude_with_retry("Hi!", options)
+        elapsed = (datetime.now() - start_time).total_seconds()
+
+        log_message = f"[{datetime.now()}] Claude responded (took {elapsed:.1f}s): {full_response}\n"
         print(log_message.strip())
-        
+
         with open(log_file_path, "a", encoding="utf-8") as f:
             f.write(log_message)
 
-        return {"status": "success", "response": full_response}
-        
+        return {"status": "success", "response": full_response, "elapsed_seconds": elapsed}
+
     except Exception as e:
         error_msg = f"Error greeting agent: {str(e)}"
         log_message = f"[{datetime.now()}] {error_msg}\n{traceback.format_exc()}\n"
