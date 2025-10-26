@@ -14,5 +14,11 @@ log/
 .idea/
 *.swp
 
+# macOS
+.DS_Store
+
+# Runtime
+*.pid
+
 # Claude-specific
 .claude/
