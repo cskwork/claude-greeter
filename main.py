@@ -26,9 +26,9 @@ LOG_DIR = "log"
 
 # 재시도 및 타임아웃 설정
 MAX_RETRIES = 3
-RETRY_DELAYS = [1, 2, 4]  # 초 단위 (지수 백오프)
-API_TIMEOUT = 30  # 초 단위
-MIN_CALL_INTERVAL = 5  # API 호출 간 최소 간격 (초)
+RETRY_DELAYS = [2, 4, 8]  # 초 단위 (지수 백오프)
+API_TIMEOUT = 60  # 초 단위
+MIN_CALL_INTERVAL = 10  # API 호출 간 최소 간격 (초)
 
 # 마지막 API 호출 시간 추적
 last_api_call_time: Optional[datetime] = None
