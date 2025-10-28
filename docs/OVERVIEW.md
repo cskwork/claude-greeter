@@ -92,6 +92,7 @@ Calculates next run based on START_TIME:
 - Start before 09:00 → First run at 09:00
 - Start at 11:30 → First run at 14:00
 - Continuous 5-hour intervals forever
+- **Quiet Hours & Resets**: If a job falls within the `PREVENT_WINDOW` (e.g., 23:00-07:00), it is skipped, and the entire schedule resets to begin at the next day's `START_TIME`.
 
 ### Three Access Methods
 1. **Automatic** - Scheduled background task

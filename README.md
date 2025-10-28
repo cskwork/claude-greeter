@@ -1,126 +1,124 @@
 # Claude Agent Greeter API
 
-Minimal scheduled API that greets Claude agent every 5 hours using Claude Agent SDK.
+Minimal scheduled API that greets the Claude agent every 5 hours using the Claude Agent SDK.
 
 ## Features
 
-- ✅ Runs every 5 hours from your designated start time
-- ✅ Cross-platform (Windows/Mac/Linux)
-- ✅ Manual trigger endpoint
-- ✅ Schedule monitoring
-- ✅ Configurable via .env
+- ✅ **Automated Setup**: `setup.sh` and `setup.bat` scripts for easy installation.
+- ✅ **Scheduled Execution**: Runs every 5 hours from your designated start time.
+- ✅ **Quiet Hours**: Configure a "prevent window" to skip jobs during specific hours.
+- 🔄 **Schedule Reset**: Automatically resets the schedule to the next day's `START_TIME` if a run is skipped during quiet hours.
+- ✅ **Robust & Resilient**: Includes retry logic with exponential backoff for API calls.
+- ✅ **Cross-Platform**: Works on Windows, macOS, and Linux.
+- ✅ **Easy Management**: Scripts to start, stop, and check the status of the application.
+- ✅ **Manual Trigger**: An API endpoint to trigger a greeting manually.
+- ✅ **Schedule Monitoring**: An API endpoint to view the current schedule.
 
 ## Prerequisites
 
-### 1. Install Node.js (for Claude Code CLI)
-- **Mac**: `brew install node`
-- **Windows**: Download from [nodejs.org](https://nodejs.org)
+1.  **Python**: Version 3.8 or higher.
+2.  **Node.js (for Claude Code CLI)**:
+    *   **Mac**: `brew install node`
+    *   **Windows**: Download from [nodejs.org](https://nodejs.org)
+3.  **Claude Code CLI**:
+    ```bash
+    npm install -g @anthropic-ai/claude-code
+    ```
+4.  **Anthropic API Key**: Get your API key from [console.anthropic.com](https://console.anthropic.com/).
 
-### 2. Install Claude Code CLI
-```bash
-npm install -g @anthropic-ai/claude-code
-```
+## Quick Start
 
-### 3. Get Anthropic API Key
-Get your API key from: https://console.anthropic.com/
+1.  **Clone the project**:
+    ```bash
+    git clone <repository-url>
+    cd claude-greeter
+    ```
 
-## Installation
+2.  **Run the setup script**:
+    *   **Mac/Linux**:
+        ```bash
+        chmod +x setup.sh
+        ./setup.sh
+        ```
+    *   **Windows**:
+        ```bat
+        setup.bat
+        ```
 
-### 1. Clone/Download Project
-```bash
-cd claude-greeter
-```
+    The setup script will:
+    - Create a Python virtual environment (`venv`).
+    - Install all required dependencies.
+    - Create a `.env` file from the `.env.example` template.
+    - Start the application in the background.
 
-### 2. Create Virtual Environment
+3.  **Configure your environment**:
+    Edit the `.env` file to set your `ANTHROPIC_API_KEY` and customize the `START_TIME`.
 
-**Mac/Linux:**
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
+    ```env
+    # Your Anthropic API key (required)
+    ANTHROPIC_API_KEY=sk-ant-xxxxx
 
-**Windows:**
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
+    # Start time in 24-hour format (HH:MM) - will run every 5 hours from this time
+    START_TIME=09:00
 
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
+    # Optional: Timezone (defaults to system timezone)
+    # TIMEZONE=America/New_York
 
-### 4. Configure .env File
-Edit the `.env` file:
+    # Optional: Prevent window - skip job execution during these hours
+    # Format: HH:MM (24-hour format)
+    # Example: PREVENT_START_TIME=23:00, PREVENT_END_TIME=04:00 prevents execution from 11 PM to 4 AM
+    PREVENT_START_TIME=23:00
+    PREVENT_END_TIME=04:00
+    ```
 
-```env
-# Your Anthropic API key (required)
-ANTHROPIC_API_KEY=sk-ant-xxxxx
+## Management
 
-# Start time in 24-hour format (required)
-START_TIME=09:00
+Use the following scripts to manage the application:
 
-# Optional: Timezone (uses system timezone if not set)
-# TIMEZONE=America/New_York
-```
+-   **Check Status**:
+    -   `./status.sh` (Mac/Linux)
+    -   `status.bat` (Windows)
+-   **Stop the Application**:
+    -   `./stop.sh` (Mac/Linux)
+    -   `stop.bat` (Windows)
+-   **View Logs**:
+    ```bash
+    tail -f log/app.log
+    ```
 
-**Common Timezones:**
-- America/New_York
-- America/Los_Angeles
-- Europe/London
-- Asia/Tokyo
-
-## Usage
-
-### Start the Server
-
-```bash
-python main.py
-```
-
-Output:
-```
-============================================================
-Claude Agent Greeter API
-============================================================
-Start time: 09:00
-Interval: Every 5 hours
-Timezone: System default
-============================================================
-INFO:     Started server process
-INFO:     Uvicorn running on http://0.0.0.0:8000
-Scheduling first greeting at: 2025-10-23 09:00:00
-Scheduler started. Next run: 2025-10-23 09:00:00
-```
-
-### API Endpoints
+## API Endpoints
 
 #### 1. Health Check
 ```bash
 curl http://localhost:8000/
 ```
-
-Response:
+*Response:*
 ```json
 {
   "status": "running",
   "message": "Claude Agent Greeter is active",
-  "next_scheduled_run": "2025-10-23 14:00:00",
+  "next_scheduled_run": "2025-10-29T14:00:00+09:00",
   "interval": "Every 5 hours",
-  "start_time": "09:00"
+  "start_time": "09:00",
+  "prevent_window": {
+    "start": "23:00",
+    "end": "04:00",
+    "active": false
+  }
 }
 ```
 
-#### 2. Manual Greeting (doesn't affect schedule)
+#### 2. Manual Greeting
+Triggers a greeting without affecting the schedule.
 ```bash
 curl -X POST http://localhost:8000/greet
 ```
-
-Response:
+*Response:*
 ```json
 {
   "status": "success",
-  "response": "Hello! Nice to hear from you. How can I help you today?"
+  "response": "Hello! Nice to hear from you. How can I help you today?",
+  "elapsed_seconds": 3.2
 }
 ```
 
@@ -128,149 +126,57 @@ Response:
 ```bash
 curl http://localhost:8000/schedule
 ```
-
-Response:
+*Response:*
 ```json
 {
   "job_id": "greet_agent_job",
   "job_name": "Greet Claude Agent",
-  "next_run_time": "2025-10-23 14:00:00",
-  "trigger": "interval[0:05:00:00]",
+  "next_run_time": "2025-10-29T14:00:00+09:00",
+  "trigger": "interval[5:00:00]",
   "interval_hours": 5,
   "start_time_config": "09:00"
 }
 ```
 
-## How It Works
+## Customization
 
-### Schedule Logic
-If you set `START_TIME=09:00`:
-- First run: 09:00
-- Second run: 14:00 (09:00 + 5 hours)
-- Third run: 19:00 (14:00 + 5 hours)
-- Fourth run: 00:00 (19:00 + 5 hours, next day)
-- Fifth run: 05:00 (00:00 + 5 hours)
-- Cycle continues...
+To customize the application's behavior, edit `main.py`:
 
-### Startup Behavior
-- If started **before** 09:00 → waits until 09:00
-- If started **after** 09:00 → calculates next 5-hour interval
-
-Example: Start at 11:30
-- Next run: 14:00 (first interval after start)
-- Then: 19:00, 00:00, 05:00, 09:00...
-
-## Running in Background
-
-### Mac/Linux (using screen)
-```bash
-screen -S claude-greeter
-python main.py
-# Press Ctrl+A then D to detach
-
-# To reattach:
-screen -r claude-greeter
-```
-
-### Mac/Linux (using nohup)
-```bash
-nohup python main.py > greeter.log 2>&1 &
-# Check logs:
-tail -f greeter.log
-```
-
-### Windows (using pythonw)
-```bash
-start /B pythonw main.py
-```
-
-### Using System Services
-
-**Mac (launchd):** Create `~/Library/LaunchAgents/com.claude.greeter.plist`
-**Linux (systemd):** Create service file in `/etc/systemd/system/`
-**Windows (Task Scheduler):** Create scheduled task
-
-## Logs
-
-Console output shows each greeting:
-```
-[2025-10-23 09:00:00] Greeting Claude agent...
-[2025-10-23 09:00:03] Claude responded: Hello! Nice to hear from you. How can I help you today?
-```
-
-## Troubleshooting
-
-### "claude-code not found"
-```bash
-# Reinstall Claude Code CLI
-npm install -g @anthropic-ai/claude-code
-
-# Verify installation
-claude-code --version
-```
-
-### "ANTHROPIC_API_KEY not found"
-- Ensure `.env` file exists in project root
-- Check API key is valid: https://console.anthropic.com/
-
-### Timezone Issues
-- List available timezones:
-```python
-import pytz
-print(pytz.all_timezones)
-```
-- Or use system timezone (leave TIMEZONE empty)
-
-### Port 8000 Already in Use
-Change port in main.py:
-```python
-uvicorn.run(app, host="0.0.0.0", port=8001)
-```
+-   **Greeting Message**: Modify the `prompt` in the `greet_agent` function.
+-   **Interval**: Change the `hours` parameter in the `IntervalTrigger` inside the `lifespan` function.
+-   **System Instructions**: Update the `system_prompt` in the `ClaudeAgentOptions` within the `greet_agent` function.
 
 ## Project Structure
 
 ```
 claude-greeter/
-├── main.py              # FastAPI app with scheduler
+├── .claude/             # Claude agent cache and logs
+├── .git/                # Git directory
+├── docs/                # Project documentation
+├── log/                 # Application logs (e.g., app.log)
+├── tests/               # Test suite
+├── venv/                # Python virtual environment
+├── .env                 # Environment variables (API key, schedule)
+├── .env.example         # Example for .env
+├── .gitignore           # Git ignore file
+├── main.py              # FastAPI app, scheduler, and core logic
+├── README.md            # This file
 ├── requirements.txt     # Python dependencies
-├── .env                 # Configuration (API key, start time)
-└── README.md           # This file
+├── setup.bat            # Windows setup script
+├── setup.sh             # Mac/Linux setup script
+├── status.bat           # Windows status script
+├── status.sh            # Mac/Linux status script
+├── stop.bat             # Windows stop script
+└── stop.sh              # Mac/Linux stop script
 ```
 
-## Customization
+## How It Works
 
-### Change Greeting Message
-Edit `main.py` line 38:
-```python
-async for message in query(prompt="Hi!", options=options):
-```
+### Schedule Logic
+The scheduler calculates the next run time based on the `START_TIME` and a fixed 5-hour interval.
 
-### Change Interval
-Edit `main.py` line 113:
-```python
-trigger=IntervalTrigger(hours=5, start_date=next_run),
-# Change hours=5 to your desired interval
-```
+-   If you set `START_TIME=09:00`, the job will run at 09:00, 14:00, 19:00, 00:00, 05:00, and so on.
+-   If the application is started *after* the day's `START_TIME`, it calculates the next valid 5-hour interval to run. For example, if started at 11:30, the next run will be at 14:00.
 
-### Add More System Instructions
-Edit `main.py` line 31:
-```python
-options = ClaudeAgentOptions(
-    system_prompt="You are a friendly assistant. Keep responses brief.",
-    max_turns=1
-)
-```
-
-## Related Concepts
-
-This project combines 3 key patterns:
-
-1. **Scheduled Tasks** - APScheduler manages time-based execution
-2. **REST APIs** - FastAPI provides HTTP endpoints for monitoring/control
-3. **Agent Integration** - Claude Agent SDK enables programmatic AI interaction
-
-Similar tools: Cron (Linux), Task Scheduler (Windows), GitHub Actions (CI/CD)
-
-## Next Action
-
-**Run the server**: `python main.py` and watch it greet Claude every 5 hours! 🚀
+### Quiet Hours (Prevent Window)
+If `PREVENT_START_TIME` and `PREVENT_END_TIME` are set in `.env`, any job scheduled to run within that time window will be skipped. **Crucially, the schedule will then reset.** The next job will be scheduled for the `START_TIME` on the following day, ensuring the interval sequence always originates from your defined `START_TIME`.

@@ -159,27 +159,72 @@ async def greet_agent():
     # 예방 윈도우 체크
     if is_in_prevent_window():
         job = scheduler.get_job('greet_agent_job')
-        next_run = job.next_run_time if job else "Unknown"
+        original_next_run = job.next_run_time if job else "Unknown"
 
         skip_message = (
             f"[{datetime.now()}] SKIPPED: Job execution prevented during quiet hours "
             f"({PREVENT_START_TIME} - {PREVENT_END_TIME}). "
-            f"Next scheduled run: {next_run}\n"
+            f"Original next run: {original_next_run}."
         )
 
         print("=" * 60)
-        print(skip_message.strip())
-        print("=" * 60)
-
+        print(skip_message)
+        
         with open(log_file_path, "a", encoding="utf-8") as f:
-            f.write(skip_message)
+            f.write(skip_message + "\n")
 
-        return {
-            "status": "skipped",
-            "reason": "Execution prevented during quiet hours",
-            "prevent_window": f"{PREVENT_START_TIME} - {PREVENT_END_TIME}",
-            "next_run": str(next_run)
-        }
+        try:
+            # 다음 START_TIME으로 스케줄 리셋
+            hour, minute = map(int, START_TIME.split(':'))
+            now = datetime.now(scheduler.timezone)
+            
+            # 내일의 START_TIME 계산
+            tomorrow = now + timedelta(days=1)
+            next_start_time = tomorrow.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+            # 만약 계산된 시간이 과거이면 하루 더 추가
+            if next_start_time < now:
+                next_start_time += timedelta(days=1)
+
+            scheduler.reschedule_job(
+                'greet_agent_job',
+                trigger=IntervalTrigger(hours=5, start_date=next_start_time, timezone=scheduler.timezone)
+            )
+            
+            new_job = scheduler.get_job('greet_agent_job')
+            new_next_run = new_job.next_run_time if new_job else "Unknown"
+
+            reschedule_message = (
+                f"[{datetime.now()}] RESCHEDULED: Job reset to start at the next START_TIME. "
+                f"New next run: {new_next_run}"
+            )
+            print(reschedule_message)
+            print("=" * 60)
+
+            with open(log_file_path, "a", encoding="utf-8") as f:
+                f.write(reschedule_message + "\n")
+
+            return {
+                "status": "skipped_and_rescheduled",
+                "reason": "Execution prevented during quiet hours and schedule reset to next START_TIME.",
+                "prevent_window": f"{PREVENT_START_TIME} - {PREVENT_END_TIME}",
+                "original_next_run": str(original_next_run),
+                "new_next_run": str(new_next_run)
+            }
+
+        except Exception as e:
+            error_message = f"[{datetime.now()}] FAILED TO RESCHEDULE: {e}"
+            print(error_message)
+            print("=" * 60)
+            with open(log_file_path, "a", encoding="utf-8") as f:
+                f.write(error_message + "\n")
+            # 리스케줄링 실패 시에도 원래 로직처럼 스킵된 것으로 처리
+            return {
+                "status": "skipped",
+                "reason": "Execution prevented during quiet hours, but failed to reschedule.",
+                "prevent_window": f"{PREVENT_START_TIME} - {PREVENT_END_TIME}",
+                "next_run": str(original_next_run)
+            }
 
     try:
         print(f"[{datetime.now()}] Greeting Claude agent...")
@@ -223,26 +268,19 @@ async def greet_agent():
 
 
 def calculate_next_run_time():
-    """Calculate the next scheduled run time based on START_TIME"""
+    """Calculate the next scheduled run time based on START_TIME."""
     try:
-        hour, minute = map(int, START_TIME.split(":"))
-        now = datetime.now()
-        start_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        hour, minute = map(int, START_TIME.split(':'))
+        # Use the scheduler's timezone for an accurate 'now'
+        now = datetime.now(scheduler.timezone)
+        
+        # Get today's START_TIME as the first potential run time
+        next_run = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
-        # If start time has passed today, schedule for next occurrence
-        if now > start_time:
-            # Find next 5-hour interval from start time
-            hours_since_start = (now - start_time).total_seconds() / 3600
-            intervals_passed = int(hours_since_start / 5) + 1
-            next_run = start_time.replace(hour=(hour + (intervals_passed * 5)) % 24)
-
-            # Adjust date if we wrapped around midnight
-            if next_run <= now:
-                from datetime import timedelta
-                next_run = start_time + timedelta(hours=(intervals_passed + 1) * 5)
-        else:
-            next_run = start_time
-
+        # If today's START_TIME has already passed, find the next 5-hour interval in the future
+        while next_run < now:
+            next_run += timedelta(hours=5)
+        
         return next_run
 
     except ValueError:
